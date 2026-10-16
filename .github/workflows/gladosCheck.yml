@@ -44,15 +44,23 @@ jobs:
         pip install requests
         pip install pypushdeer
 
-    # 执行 签到脚本
+    # 执行 签到脚本（tee 落盘日志供 Bark 推送读取）
     - name: Running checkin
       run: |
-        python checkin.py
+        python checkin.py 2>&1 | tee checkin.log
       env:
         PUSHDEER_SENDKEY: ${{ secrets.PUSHDEER_SENDKEY }}
         GLADOS_COOKIES: ${{ secrets.GLADOS_COOKIES }}
         GLADOS_EXCHANGE_PLAN: ${{ secrets.GLADOS_EXCHANGE_PLAN }}
         GLADOS_VERBOSE: ${{ secrets.GLADOS_VERBOSE }}
+
+    # Bark 手机推送（签到成功/失败均推送）
+    - name: Bark push
+      if: always()
+      run: |
+        python bark_push.py
+      env:
+        BARK_URL: ${{ secrets.BARK_URL }}
 
     - name: Keep alive
       uses: liskin/gh-workflow-keepalive@v1 
