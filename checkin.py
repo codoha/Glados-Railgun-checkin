@@ -98,6 +98,7 @@ class Config:
 
     ENV_PUSH_KEY = "PUSHDEER_SENDKEY"
     ENV_COOKIES = "GLADOS_COOKIES"
+    ENV_COOKIES_2 = "GLADOS_COOKIES_2"
     ENV_EXCHANGE_PLAN = "GLADOS_EXCHANGE_PLAN"
     ENV_VERBOSE = "GLADOS_VERBOSE"
 
@@ -128,6 +129,7 @@ class Config:
         """加载配置"""
         push_key_env: Optional[str] = os.environ.get(self.ENV_PUSH_KEY)
         raw_cookies_env: Optional[str] = os.environ.get(self.ENV_COOKIES)
+        raw_cookies_env_2: Optional[str] = os.environ.get(self.ENV_COOKIES_2)
         exchange_plan_env: Optional[str] = os.environ.get(self.ENV_EXCHANGE_PLAN)
         verbose_env: Optional[str] = os.environ.get(self.ENV_VERBOSE)
 
@@ -137,13 +139,16 @@ class Config:
         else:
             self.push_key = push_key_env
 
-        if not raw_cookies_env:
-            logger.warning(f"{LogEmoji.WARNING} 环境变量 '{self.ENV_COOKIES}' 未设置。")
-            self.cookies_list = []
-        else:
-            self.cookies_list = [cookie.strip() for cookie in raw_cookies_env.split("&") if cookie.strip()]
-            if not self.cookies_list:
-                raise ValueError(f"环境变量 '{self.ENV_COOKIES}' 已设置，但未包含任何有效的 Cookie。")
+        # 多个 secret 依次合并：GLADOS_COOKIES 与 GLADOS_COOKIES_2 都支持 & 分隔多账号
+        self.cookies_list = []
+        for env_name, raw in ((self.ENV_COOKIES, raw_cookies_env), (self.ENV_COOKIES_2, raw_cookies_env_2)):
+            if not raw:
+                logger.warning(f"{LogEmoji.WARNING} 环境变量 '{env_name}' 未设置。")
+                continue
+            parsed = [cookie.strip() for cookie in raw.split("&") if cookie.strip()]
+            if not parsed:
+                raise ValueError(f"环境变量 '{env_name}' 已设置，但未包含任何有效的 Cookie。")
+            self.cookies_list.extend(parsed)
 
         if not exchange_plan_env:
             logger.warning(f"{LogEmoji.WARNING} 环境变量 '{self.ENV_EXCHANGE_PLAN}' 未设置，将使用默认设置（不自动兑换）。")
@@ -194,6 +199,8 @@ class API:
         self.domain: str = domain
         self.cookie_index: int = cookie_index
         self.verbose: bool = verbose
+        # 最近一次 get_status 返回的账号邮箱，用于在签到总结里标明是哪个账号
+        self.last_email: Optional[str] = None
         self.headers: Dict[str, str] = self._get_headers()
         self._device_ua_cache: Dict[str, str] = {}
         self.session = requests.Session()
@@ -373,7 +380,9 @@ class API:
         if response:
             data = response.json()
             code = data.get("code", -2)
-            left_days = data.get("data", {}).get("leftDays", None)
+            payload = data.get("data") or {}
+            self.last_email = payload.get("email")
+            left_days = payload.get("leftDays", None)
 
             if left_days is not None:
                 left_days_int = int(float(left_days))
@@ -441,6 +450,7 @@ class CheckinResult:
     status: str = "签到失败"
     points: str = "0"
     days: str = "None"
+    email: str = "-"
     points_total: str = "None"
     exchange: str = "未兑换"
     code: CheckinStatus = CheckinStatus.FAILURE  # 0: 成功, 1: 重复, -2: 失败
@@ -520,6 +530,7 @@ class Checker:
             self._log(cookie_idx, domain, LogEmoji.STATUS, "查询剩余天数")
             days_str, status_code = api.get_status(cookie)
             result.days = days_str
+            result.email = api.last_email or "-"
 
             # 2. 签到
             self._log(cookie_idx, domain, LogEmoji.CHECKIN, "执行签到")
@@ -565,13 +576,13 @@ class Checker:
         send_content_lines = []
         log_content_lines = []
         for i, res in enumerate(results, 1):
-            line = f"#{i} P:{res['points']} 剩余:{res['days']} 总积分:{res['points_total']} | {res['status']} | {res['exchange']}"
+            line = f"#{i} [{res['email']}] 剩余:{res['days']} 总积分:{res['points_total']} | {res['status']} | {res['exchange']}"
             send_content_lines.append(line)
 
             if self.config.verbose:
                 log_line = line
             else:
-                log_line = f"#{i} {res['status']}"
+                log_line = f"#{i} [{res['email']}] {res['status']}"
             log_content_lines.append(log_line)
 
         content = "\n".join(send_content_lines)
