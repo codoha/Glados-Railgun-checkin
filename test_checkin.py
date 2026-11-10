@@ -6,7 +6,7 @@ from unittest.mock import patch
 
 import requests
 
-from checkin import API, Checker, CheckinStatus, PLATFORM_UA
+from checkin import API, Checker, CheckinStatus, Config, PLATFORM_UA
 
 
 class CheckinServer:
@@ -133,6 +133,55 @@ class SummaryTests(unittest.TestCase):
             checker.results = [checker._checkin_on_domain("test-cookie", 1, "glados.cloud")]
         _, _, log = checker.format_results()
         self.assertIn("变化:未知", log)
+
+
+class ExchangePolicyTests(unittest.TestCase):
+    def config(self, value):
+        with patch.dict("os.environ", {"GLADOS_EXCHANGE_PLAN": value}, clear=True):
+            return Config()
+
+    def run_account(self, config, email):
+        checker = Checker(config)
+        with patch("checkin.API") as api_class:
+            api = api_class.return_value.__enter__.return_value
+            api.last_email = email
+            api.get_status.return_value = ("19 天", 0)
+            api.get_points.side_effect = [("108 积分", 108), ("119 积分", 119)]
+            api.checkin.return_value = {"status": "签到成功", "code": CheckinStatus.SUCCESS,
+                                       "points": "11"}
+            api.exchange.return_value = "兑换成功: plan100"
+            result = checker._checkin_on_domain("test-cookie", 1, "glados.cloud")
+            api.checkin.assert_called_once_with("test-cookie")
+            self.assertEqual(result.points_delta, 11)
+            return result, api.exchange
+
+    def test_excluded_account_still_checks_in_without_spending_points(self):
+        config = self.config('{"plan":"plan100","exclude_emails":[" Disabled@Example.com "]}')
+        result, exchange = self.run_account(config, "disabled@example.com")
+        exchange.assert_not_called()
+        self.assertEqual(result.exchange, "已关闭此账号自动兑换")
+
+    def test_other_account_keeps_existing_exchange_plan(self):
+        config = self.config('{"plan":"plan100","exclude_emails":["disabled@example.com"]}')
+        _, exchange = self.run_account(config, "active@example.com")
+        exchange.assert_called_once_with("test-cookie", "plan100", 100)
+
+    def test_unknown_account_skips_exchange_when_exclusions_exist(self):
+        config = self.config('{"plan":"plan100","exclude_emails":["disabled@example.com"]}')
+        result, exchange = self.run_account(config, None)
+        exchange.assert_not_called()
+        self.assertIn("未识别账号", result.exchange)
+
+    def test_legacy_plan_remains_compatible(self):
+        _, exchange = self.run_account(self.config("plan100"), "active@example.com")
+        exchange.assert_called_once_with("test-cookie", "plan100", 100)
+
+    def test_invalid_policy_keeps_checkin_but_never_exchanges(self):
+        for value in ('{', '{"plan":"wrong"}', '{"plan":"plan100","exclude_emails":"bad"}',
+                      '{"plan":[],"exclude_emails":[]}', '{"plan":"plan100","exclude_emails":[null]}'):
+            with self.subTest(value=value):
+                _, exchange = self.run_account(self.config(value), "active@example.com")
+                exchange.assert_not_called()
 
 
 if __name__ == "__main__":
