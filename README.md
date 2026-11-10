@@ -44,6 +44,16 @@
 
 > 不配置时默认不进行自动兑换；如需兑换，设置 `GLADOS_EXCHANGE_PLAN` 为 `plan100` / `plan200` / `plan500`。
 
+只关闭某个账号的自动兑换、保留签到时，可以将同一个 Secret 改为 JSON：
+
+```json
+{"plan":"plan100","exclude_emails":["account@example.com"]}
+```
+
+`plan` 继续控制其他账号的兑换；`exclude_emails` 中的账号只签到、积累积分。
+邮箱匹配忽略大小写。配置无效或无法识别账号时跳过兑换，签到仍照常执行。
+请将真实邮箱保存在 Secret 中，不要提交到公开仓库。
+
 4. 手机推送（非必须）
 
 - 添加1个`repository secret`，命名为`PUSHDEER_SENDKEY`，其值对应 PushDeer key: ([获取地址](https://www.pushdeer.com/product.html))。
