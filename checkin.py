@@ -126,6 +126,7 @@ class Config:
         self.push_key: str = ""
         self.cookies_list: List[str] = []
         self.exchange_plan: str = self.DEFAULT_EXCHANGE_PLAN
+        self.exchange_excluded_emails: set[str] = set()
         self.verbose: bool = self.DEFAULT_VERBOSE
         self._load_config()
 
@@ -158,11 +159,27 @@ class Config:
             logger.warning(f"{LogEmoji.WARNING} 环境变量 '{self.ENV_EXCHANGE_PLAN}' 未设置，将使用默认设置（不自动兑换）。")
             self.exchange_plan = self.DEFAULT_EXCHANGE_PLAN
         else:
-            if exchange_plan_env in self.EXCHANGE_PLANS:
-                self.exchange_plan = exchange_plan_env
-                logger.info(f"{LogEmoji.SUCCESS} 使用指定的兑换计划: {self.exchange_plan}")
-            else:
-                logger.warning(f"{LogEmoji.WARNING} 环境变量 '{self.ENV_EXCHANGE_PLAN}' 的值 '{exchange_plan_env}' 无效，将跳过自动兑换。")
+            try:
+                # 兼容旧的 plan100 字符串；JSON 可只关闭指定账号的兑换。
+                policy = (json.loads(exchange_plan_env)
+                          if exchange_plan_env.lstrip().startswith("{")
+                          else {"plan": exchange_plan_env.strip()})
+                plan = policy.get("plan", self.DEFAULT_EXCHANGE_PLAN)
+                excluded = policy.get("exclude_emails", [])
+                if not isinstance(plan, str) or plan not in (*self.EXCHANGE_PLANS, "none"):
+                    raise ValueError("invalid exchange plan")
+                if not isinstance(excluded, list) or any(
+                    not isinstance(email, str) or "@" not in email.strip()
+                    for email in excluded
+                ):
+                    raise ValueError("invalid excluded accounts")
+                self.exchange_plan = plan
+                self.exchange_excluded_emails = {email.strip().casefold() for email in excluded}
+                logger.info(f"{LogEmoji.SUCCESS} 使用指定的兑换计划: {self.exchange_plan}; "
+                            f"关闭兑换的账号数: {len(self.exchange_excluded_emails)}")
+            except (ValueError, TypeError):
+                # 配置无效时仍然签到，但不进行任何自动兑换，也不输出配置原文。
+                logger.warning(f"{LogEmoji.WARNING} 环境变量 '{self.ENV_EXCHANGE_PLAN}' 无效，将跳过自动兑换。")
                 self.exchange_plan = self.DEFAULT_EXCHANGE_PLAN
 
         logger.info(f"{LogEmoji.INFO} 共加载了 {len(self.cookies_list)} 个 Cookie 用于签到。")
@@ -584,8 +601,14 @@ class Checker:
             if result.points_before != "None 积分" and points_str != "None 积分":
                 result.points_delta = points_num - points_before_num
 
-            # 5. 执行兑换（未配置有效兑换计划时跳过）
-            if self.config.exchange_plan in self.config.EXCHANGE_PLANS:
+            # 5. 账号停兑仅影响兑换；前面的签到与积分查询照常执行。
+            excluded = getattr(self.config, "exchange_excluded_emails", set())
+            email = (api.last_email or "").strip().casefold()
+            if excluded and (not email or email in excluded):
+                result.exchange = ("已关闭此账号自动兑换" if email
+                                   else "未识别账号，跳过自动兑换")
+                self._log(cookie_idx, domain, LogEmoji.INFO, result.exchange, force=True)
+            elif self.config.exchange_plan in self.config.EXCHANGE_PLANS:
                 required_points = self.config.EXCHANGE_PLANS[self.config.exchange_plan]
                 self._log(
                     cookie_idx,
