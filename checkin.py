@@ -103,6 +103,7 @@ class Config:
     ENV_PUSH_KEY = "PUSHDEER_SENDKEY"
     ENV_COOKIES = "GLADOS_COOKIES"
     ENV_COOKIES_2 = "GLADOS_COOKIES_2"
+    ENV_COOKIES_3 = "GLADOS_COOKIES_3"
     ENV_EXCHANGE_PLAN = "GLADOS_EXCHANGE_PLAN"
     ENV_VERBOSE = "GLADOS_VERBOSE"
 
@@ -135,6 +136,7 @@ class Config:
         push_key_env: Optional[str] = os.environ.get(self.ENV_PUSH_KEY)
         raw_cookies_env: Optional[str] = os.environ.get(self.ENV_COOKIES)
         raw_cookies_env_2: Optional[str] = os.environ.get(self.ENV_COOKIES_2)
+        raw_cookies_env_3: Optional[str] = os.environ.get(self.ENV_COOKIES_3)
         exchange_plan_env: Optional[str] = os.environ.get(self.ENV_EXCHANGE_PLAN)
         verbose_env: Optional[str] = os.environ.get(self.ENV_VERBOSE)
 
@@ -144,9 +146,13 @@ class Config:
         else:
             self.push_key = push_key_env
 
-        # 多个 secret 依次合并：GLADOS_COOKIES 与 GLADOS_COOKIES_2 都支持 & 分隔多账号
+        # 多个 secret 依次合并：GLADOS_COOKIES / _2 / _3 都支持 & 分隔多账号
         self.cookies_list = []
-        for env_name, raw in ((self.ENV_COOKIES, raw_cookies_env), (self.ENV_COOKIES_2, raw_cookies_env_2)):
+        for env_name, raw in (
+            (self.ENV_COOKIES, raw_cookies_env),
+            (self.ENV_COOKIES_2, raw_cookies_env_2),
+            (self.ENV_COOKIES_3, raw_cookies_env_3),
+        ):
             if not raw:
                 logger.warning(f"{LogEmoji.WARNING} 环境变量 '{env_name}' 未设置。")
                 continue
