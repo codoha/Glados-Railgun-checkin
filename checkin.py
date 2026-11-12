@@ -370,6 +370,13 @@ class API:
                 checkin_data = self._get_checkin_data(cookies, recover_ua)
                 raw = self._checkin_attempt(url, checkin_data, cookies, recover_ua)
 
+        if raw is not None and raw.get("breakdown") is not None:
+            self._log(
+                "info",
+                LogEmoji.POINTS,
+                f"计分明细 breakdown={json.dumps(raw.get('breakdown'), ensure_ascii=False)}",
+                force=True,
+            )
         if raw is not None and raw.get("reason"):
             self._log(
                 "warning",
