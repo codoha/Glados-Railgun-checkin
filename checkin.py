@@ -334,6 +334,15 @@ class API:
         if not isinstance(nonce, str) or not nonce:
             raise ValueError("签到校验缺少 nonce，已停止本次签到")
         ttl = float(challenge.get("ttl", 300000))
+        if challenge.get("turnstile"):
+            # 2026-11 起官方在 challenge 里下发 Turnstile sitekey；
+            # 不带 turnstile token / tsState 的请求服务端仍返回 code 0，但只给 Base 保底分。
+            self._log(
+                "warning",
+                LogEmoji.WARNING,
+                "官方签到要求 Cloudflare Turnstile 人机验证，本次不带 token，预计只拿 Base 保底分",
+                force=True,
+            )
         if not math.isfinite(ttl) or ttl <= self.CHALLENGE_WAIT * 1000:
             raise ValueError("签到校验有效期不足，已停止本次签到")
         proof = hashlib.sha256(f"{nonce}.{self.CHALLENGE_SALT}".encode("utf-8")).hexdigest()
@@ -360,6 +369,14 @@ class API:
                 self._log("warning", LogEmoji.WARNING, f"设备平台不匹配 (loginDevice={login_device})，切换 UA 重试", force=True)
                 checkin_data = self._get_checkin_data(cookies, recover_ua)
                 raw = self._checkin_attempt(url, checkin_data, cookies, recover_ua)
+
+        if raw is not None and raw.get("reason"):
+            self._log(
+                "warning",
+                LogEmoji.WARNING,
+                f"服务端标记 reason={raw.get('reason')}，本次得分 {raw.get('points', 0)}",
+                force=True,
+            )
 
         return self._parse_checkin(raw)
 
