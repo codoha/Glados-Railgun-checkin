@@ -1,12 +1,16 @@
 """Regression tests for the public check-in challenge protocol (2026-11-08)."""
 import json
+import os
+import subprocess
+import sys
 import unittest
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
 import requests
 
-from checkin import API, Checker, CheckinStatus, Config, PLATFORM_UA
+from checkin import API, Checker, CheckinResult, CheckinStatus, Config, PLATFORM_UA, main
 
 
 class CheckinServer:
@@ -105,6 +109,31 @@ class ChallengeTests(unittest.TestCase):
         self.assertEqual(result["code"], CheckinStatus.REPEAT)
         self.assertEqual(result["points"], "0")
 
+    def test_turnstile_rejection_reports_no_record_or_reward(self):
+        with API("glados.cloud") as api:
+            result = api._parse_checkin({"code": 5, "reason": "turnstile", "points": 0,
+                "message": "Cloudflare verification failed. Nothing was recorded — please retry."})
+        self.assertEqual(result["code"], CheckinStatus.FAILURE)
+        self.assertEqual(result["points"], "0")
+        self.assertIn("未记录签到", result["message"])
+        self.assertIn("官网", result["message"])
+
+    def test_turnstile_challenge_never_promises_base_reward(self):
+        server = CheckinServer()
+        original_request = server.request
+        def request(*args, **kwargs):
+            response = original_request(*args, **kwargs)
+            body = response.json()
+            if "nonce" in body:
+                body["turnstile"] = "test-site-key"
+                response._content = json.dumps(body).encode()
+            return response
+        server.request = request
+        with self.assertLogs(level="WARNING") as logs:
+            self.run_checkin(server)
+        self.assertNotIn("只拿 Base 保底分", "\n".join(logs.output))
+        self.assertIn("拒绝", "\n".join(logs.output))
+
 
 class SummaryTests(unittest.TestCase):
     def test_default_log_and_push_show_actual_reward_and_balance_change(self):
@@ -182,6 +211,52 @@ class ExchangePolicyTests(unittest.TestCase):
             with self.subTest(value=value):
                 _, exchange = self.run_account(self.config(value), "active@example.com")
                 exchange.assert_not_called()
+
+
+class MainExitTests(unittest.TestCase):
+    def run_results(self, codes):
+        config = SimpleNamespace(cookies_list=["test-cookie"], push_key="", verbose=False)
+        checker = Checker(config)
+        checker.results = [CheckinResult(i, "glados.cloud", code=code) for i, code in enumerate(codes, 1)]
+        with patch("checkin.Config", return_value=config), \
+                patch("checkin.Checker", return_value=checker), \
+                patch.object(checker, "checkin_all"), \
+                patch("checkin.PushService.send", return_value=False) as push:
+            status = main()
+        push.assert_called_once()
+        return status
+
+    def test_success_and_repeat_exit_zero(self):
+        self.assertEqual(self.run_results([CheckinStatus.SUCCESS, CheckinStatus.REPEAT]), 0)
+
+    def test_any_failed_account_exits_nonzero(self):
+        self.assertEqual(self.run_results([CheckinStatus.FAILURE]), 1)
+        self.assertEqual(self.run_results([CheckinStatus.SUCCESS, CheckinStatus.FAILURE]), 1)
+
+    def test_configuration_error_has_no_secondary_push_crash(self):
+        with patch("checkin.Config", side_effect=ValueError("invalid cookie configuration")), \
+                patch("checkin.PushService") as push:
+            self.assertEqual(main(), 1)
+        push.assert_not_called()
+
+    def test_checker_exception_exits_nonzero_and_still_summarizes(self):
+        config = SimpleNamespace(cookies_list=["test-cookie"], push_key="", verbose=False)
+        with patch("checkin.Config", return_value=config), \
+                patch("checkin.Checker.checkin_all", side_effect=RuntimeError("test failure")), \
+                patch("checkin.PushService.send", return_value=False) as push:
+            self.assertEqual(main(), 1)
+        push.assert_called_once()
+
+    def test_empty_results_are_not_success(self):
+        self.assertEqual(self.run_results([]), 1)
+
+    def test_cli_without_cookies_exits_nonzero_without_network(self):
+        env = {key: value for key, value in os.environ.items()
+               if not key.startswith("GLADOS_") and key not in ("PUSHDEER_SENDKEY", "BARK_URL")}
+        result = subprocess.run([sys.executable, str(Path(__file__).with_name("checkin.py"))],
+                                env=env, capture_output=True, text=True, timeout=10)
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("未找到有效的 Cookie", result.stderr)
 
 
 if __name__ == "__main__":

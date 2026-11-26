@@ -2,6 +2,11 @@ name: auto check
 
 on:
   workflow_dispatch:
+    inputs:
+      verify_only:
+        description: '验证签到流程，关闭通知和自动兑换'
+        type: boolean
+        default: true
   push:
     branches: [ master ]
     paths-ignore:
@@ -15,6 +20,7 @@ jobs:
   build:
     name: glados/railgun checkin
     runs-on: ubuntu-latest
+    timeout-minutes: 15
       
     permissions:
       contents: read
@@ -42,13 +48,25 @@ jobs:
       run: |
         python -m pip install --upgrade pip
         pip install requests
-        pip install pypushdeer
+        pip install pypushdeer playwright==1.65.2
+        python -m playwright install --with-deps chromium
+
+    - name: Regression tests
+      run: python -m unittest discover -v
 
     # 执行 签到脚本（tee 落盘日志供 Bark 推送读取）
     - name: Running checkin
+      shell: bash
       run: |
+        set -o pipefail
+        if [[ "$VERIFY_ONLY" == "true" ]]; then
+          unset PUSHDEER_SENDKEY
+          export GLADOS_EXCHANGE_PLAN=none
+        fi
         python checkin.py 2>&1 | tee checkin.log
       env:
+        VERIFY_ONLY: ${{ github.event_name == 'workflow_dispatch' && inputs.verify_only }}
+        GLADOS_CHECKIN_MODE: browser
         PUSHDEER_SENDKEY: ${{ secrets.PUSHDEER_SENDKEY }}
         GLADOS_COOKIES: ${{ secrets.GLADOS_COOKIES }}
         GLADOS_COOKIES_2: ${{ secrets.GLADOS_COOKIES_2 }}
@@ -58,7 +76,7 @@ jobs:
 
     # Bark 手机推送（签到成功/失败均推送）
     - name: Bark push
-      if: always()
+      if: ${{ always() && !(github.event_name == 'workflow_dispatch' && inputs.verify_only) }}
       run: |
         python bark_push.py
       env:

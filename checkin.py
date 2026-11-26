@@ -129,6 +129,16 @@ class Config:
         self.exchange_plan: str = self.DEFAULT_EXCHANGE_PLAN
         self.exchange_excluded_emails: set[str] = set()
         self.verbose: bool = self.DEFAULT_VERBOSE
+        self.checkin_mode = os.environ.get("GLADOS_CHECKIN_MODE", "browser").strip().lower()
+        if self.checkin_mode not in ("browser", "api"):
+            raise ValueError("GLADOS_CHECKIN_MODE 必须为 browser 或 api")
+        headless = os.environ.get("GLADOS_BROWSER_HEADLESS", "true").strip().lower()
+        if headless not in ("true", "false"):
+            raise ValueError("GLADOS_BROWSER_HEADLESS 必须为 true 或 false")
+        self.browser_headless = headless == "true"
+        self.browser_channel = os.environ.get("GLADOS_BROWSER_CHANNEL", "").strip() or None
+        if self.browser_channel not in (None, "chrome", "msedge"):
+            raise ValueError("GLADOS_BROWSER_CHANNEL 必须为空、chrome 或 msedge")
         self._load_config()
 
     def _load_config(self) -> None:
@@ -226,7 +236,11 @@ class API:
     POINTS_URL = APIEndpoint.POINTS.value
     EXCHANGE_URL = APIEndpoint.EXCHANGE.value
 
-    def __init__(self, domain: str, cookie_index: int = 0, verbose: bool = False):
+    def __init__(self, domain: str, cookie_index: int = 0, verbose: bool = False,
+                 checkin_mode: str = "api", browser_headless: bool = True, browser_channel: Optional[str] = None):
+        self.checkin_mode = checkin_mode
+        self.browser_headless = browser_headless
+        self.browser_channel = browser_channel
         self.domain: str = domain
         self.cookie_index: int = cookie_index
         self.verbose: bool = verbose
@@ -336,11 +350,11 @@ class API:
         ttl = float(challenge.get("ttl", 300000))
         if challenge.get("turnstile"):
             # 2026-11 起官方在 challenge 里下发 Turnstile sitekey；
-            # 不带 turnstile token / tsState 的请求服务端仍返回 code 0，但只给 Base 保底分。
+            # 2026-11-25 实测：缺少验证时返回 code 5，拒绝签到，不再发放保底分。
             self._log(
                 "warning",
                 LogEmoji.WARNING,
-                "官方签到要求 Cloudflare Turnstile 人机验证，本次不带 token，预计只拿 Base 保底分",
+                "官方签到要求 Cloudflare Turnstile 人机验证；缺少验证可能被拒绝，请在官网完成验证",
                 force=True,
             )
         if not math.isfinite(ttl) or ttl <= self.CHALLENGE_WAIT * 1000:
@@ -353,7 +367,13 @@ class API:
 
     @log_method
     def checkin(self, cookies: str) -> Dict[str, Union[str, CheckinStatus]]:
-        """执行签到，含设备平台自适应重试"""
+        """优先使用官网流程；显式 api 模式仅供兼容旧协议。"""
+        if self.checkin_mode == "browser":
+            from browser_checkin import checkin_in_browser
+            raw = checkin_in_browser(self.domain, cookies, headless=self.browser_headless,
+                                     channel=self.browser_channel)
+            self._log_checkin_response(raw)
+            return self._parse_checkin(raw)
         url = self._get_full_url(self.CHECKIN_URL)
         # 起始 UA 优先复用已学得的设备 UA，否则用会话默认 UA
         start_ua = self._device_ua_cache.get("_last") or self.headers.get("user-agent")
@@ -370,6 +390,10 @@ class API:
                 checkin_data = self._get_checkin_data(cookies, recover_ua)
                 raw = self._checkin_attempt(url, checkin_data, cookies, recover_ua)
 
+        self._log_checkin_response(raw)
+        return self._parse_checkin(raw)
+
+    def _log_checkin_response(self, raw: Optional[Dict]) -> None:
         if raw is not None and raw.get("breakdown") is not None:
             self._log(
                 "info",
@@ -384,8 +408,6 @@ class API:
                 f"服务端标记 reason={raw.get('reason')}，本次得分 {raw.get('points', 0)}",
                 force=True,
             )
-
-        return self._parse_checkin(raw)
 
     def _checkin_attempt(self, url: str, data: Dict, cookies: str, user_agent: str) -> Optional[Dict]:
         """发起一次签到请求并返回解析后的响应体（失败返回 None）"""
@@ -422,6 +444,10 @@ class API:
             return result
 
         code = raw.get("code", -2)
+        if code == 5 and raw.get("reason") == "turnstile":
+            result["message"] = "Cloudflare 人机验证失败，未记录签到、未发放积分；请在官网完成验证后重试"
+            self._log("warning", LogEmoji.WARNING, result["message"], force=True)
+            return result
         if code == CheckinStatus.SUCCESS.value and raw.get("repeated"):
             code = CheckinStatus.REPEAT.value
         message = raw.get("message", "无消息字段")
@@ -433,7 +459,8 @@ class API:
             result["status"] = "签到成功"
             result["points"] = points
             result["message"] = message
-        elif code == CheckinStatus.REPEAT.value:
+        elif code == CheckinStatus.REPEAT.value and (
+                self.checkin_mode == "api" or raw.get("repeated") is True):
             self._log("info", LogEmoji.REPEAT, f"{{ code : {code}, message : {message} }}", force=True)
             result["code"] = CheckinStatus.REPEAT
             result["status"] = "重复签到"
@@ -606,7 +633,10 @@ class Checker:
     def _checkin_on_domain(self, cookie: str, cookie_idx: int, domain: str) -> CheckinResult:
         result = CheckinResult(cookie_idx, domain)
 
-        with API(domain, cookie_idx, verbose=self.config.verbose) as api:
+        with API(domain, cookie_idx, verbose=self.config.verbose,
+                 checkin_mode=getattr(self.config, "checkin_mode", "api"),
+                 browser_headless=getattr(self.config, "browser_headless", True),
+                 browser_channel=getattr(self.config, "browser_channel", None)) as api:
             # 1. 获取状态
             self._log(cookie_idx, domain, LogEmoji.STATUS, "查询剩余天数")
             days_str, status_code = api.get_status(cookie)
@@ -690,8 +720,10 @@ class Checker:
 logger = init_logger()
 
 
-def main():
-    """主函数"""
+def main() -> int:
+    """返回签到退出码：全部成功或重复才为 0，任一失败或无结果为 1。"""
+    config = None
+    exit_code = 1
     try:
         # 1. 加载配置
         logger.info(f"{LogEmoji.START} 步骤 1: 加载配置")
@@ -705,6 +737,11 @@ def main():
             logger.info(f"{LogEmoji.START} 步骤 2: 执行签到")
             checker = Checker(config)
             checker.checkin_all()
+            if checker.results and all(
+                result.code in (CheckinStatus.SUCCESS, CheckinStatus.REPEAT)
+                for result in checker.results
+            ):
+                exit_code = 0
 
             # 3. 格式化结果
             logger.info(f"{LogEmoji.START} 步骤 3: 格式化结果")
@@ -712,15 +749,19 @@ def main():
             logger.info(f"\n{LogEmoji.END}========== 签到总结 ==========\n{title}\n{log_content}")
 
     except Exception as e:
+        exit_code = 1
         logger.error(f"{LogEmoji.ERROR} 主程序执行过程中发生未预期的错误: {e}")
         title, content, log_content = "# 脚本执行出错", str(e), str(e)
 
     # 4. 发送推送
     logger.info(f"{LogEmoji.START} 步骤 4: 发送推送")
-    push_service = PushService(config if "config" in locals() else "")
-    push_service.send(title, content)
+    if config is not None:
+        PushService(config).send(title, content)
+    else:
+        logger.warning(f"{LogEmoji.WARNING} 配置加载失败，跳过推送。")
     logger.info(f"{LogEmoji.END} 签到完成")
+    return exit_code
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())
