@@ -148,6 +148,17 @@ class BrowserCheckinTests(unittest.TestCase):
                 self.assertEqual(page.clicked, 0)
                 self.assertTrue(fixture.context_closed and fixture.browser_closed)
 
+    def test_official_authenticate_redirect_requires_login(self):
+        class AuthenticatePage(Page):
+            def goto(self, url, **kwargs):
+                self.url = "https://glados.cloud/authenticate"
+        fixture = BrowserFixture(AuthenticatePage())
+        result = fixture.run()
+        self.assertEqual(result["code"], -2)
+        self.assertEqual(result["reason"], "login-required")
+        self.assertEqual(fixture.page.clicked, 0)
+        self.assertTrue(fixture.context_closed and fixture.browser_closed)
+
     def test_login_requires_a_profile_with_nonempty_email(self):
         for login in ({"code": 0}, {"code": 0, "data": []},
                       {"code": 0, "data": {}}, {"code": 0, "data": {"email": " "}},

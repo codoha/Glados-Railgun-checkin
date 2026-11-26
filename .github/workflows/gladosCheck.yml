@@ -19,7 +19,7 @@ on:
 jobs:
   build:
     name: glados/railgun checkin
-    runs-on: macos-latest
+    runs-on: ubuntu-latest
     timeout-minutes: 15
       
     permissions:
@@ -83,6 +83,7 @@ jobs:
         BARK_URL: ${{ secrets.BARK_URL }}
 
     - name: Keep alive
+      if: ${{ always() && github.ref == 'refs/heads/master' }}
       uses: liskin/gh-workflow-keepalive@v1 
         
     - name: Delete workflow runs

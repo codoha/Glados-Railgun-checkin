@@ -8,11 +8,10 @@
 
 - 安装：`pip install requests pypushdeer playwright==1.65.2`，然后执行 `python -m playwright install --with-deps chromium`。
 - 本机人工验证模式：`GLADOS_BROWSER_HEADLESS=false GLADOS_BROWSER_CHANNEL=chrome python checkin.py`。如页面提示真人验证，请在浏览器中完成；默认等待最长 120 秒。
-- Actions 使用 macOS runner，与现有 Cookie 的登录平台一致。Cookie 来自其他平台时需选择相应 runner，设备不匹配会被官网拒绝。
 - 默认 `GLADOS_CHECKIN_MODE=browser`；显式 `api` 只保留旧协议兼容，无法替代必需的真人验证。
 - 无人值守浏览器不能保证通过 Turnstile。出现 `needs-verification` 或 `turnstile` 时需在官网人工处理；脚本不会点击验证码、伪造验证结果或调用解题服务。
 - 手动运行 Actions 默认开启 `verify_only`，仍会尝试签到，但不推送、不兑换。定时运行沿用已有通知与兑换设置。
-- 2026-11-26 官网人工验证已实测签到成功，到账 2 分；回执含 `freeCap=2`，这是免费账号积分上限。无人值守是否可通过验证需看运行结果。
+- 2026-11-26 官网人工验证已实测签到成功，到账 2 分；回执含 `freeCap=2`，这是免费账号积分上限。GitHub Ubuntu 和 macOS runner 均实测被官网以 `device-mismatch / Automated check-in detected` 拒绝；无人值守签到尚未恢复，匹配操作系统不能消除此限制。
 - 离线回归：`python -m unittest discover -v`。
 
 ## 食用方式：

@@ -129,7 +129,7 @@ def checkin_in_browser(domain, cookies, headless=True, channel=None, timeout_ms=
     except BrowserTimeout:
         if page is not None:
             url = urlsplit(page.url)
-            if url.path.startswith(("/login", "/signin")):
+            if url.path.startswith(("/login", "/signin", "/authenticate")):
                 return _failure("官网已跳转到登录页，请更新登录 Cookie", "login-required")
         return _failure(
             "等待官网签到超时，未确认签到成功；请打开官网完成人工验证后重试，或使用有界面模式",
