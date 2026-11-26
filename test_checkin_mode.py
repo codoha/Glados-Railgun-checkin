@@ -62,6 +62,17 @@ class BrowserModeTests(unittest.TestCase):
         self.assertEqual(result["code"], CheckinStatus.REPEAT)
         self.assertEqual(result["points"], "0")
 
+    def test_api_mode_requires_explicit_repeat_flag(self):
+        with API("glados.cloud", checkin_mode="api") as api:
+            for repeated in (None, False, "true", "false", 1):
+                with self.subTest(repeated=repeated):
+                    result = api._parse_checkin({"code": 1, "repeated": repeated,
+                                                "message": "Cloudflare verification failed"})
+                    self.assertEqual(result["code"], CheckinStatus.FAILURE)
+            result = api._parse_checkin({"code": 1, "repeated": True, "points": 11})
+            self.assertEqual(result["code"], CheckinStatus.REPEAT)
+            self.assertEqual(result["points"], "0")
+
 
 if __name__ == "__main__":
     unittest.main()

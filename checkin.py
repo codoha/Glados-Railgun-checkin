@@ -459,8 +459,7 @@ class API:
             result["status"] = "签到成功"
             result["points"] = points
             result["message"] = message
-        elif code == CheckinStatus.REPEAT.value and (
-                self.checkin_mode == "api" or raw.get("repeated") is True):
+        elif code == CheckinStatus.REPEAT.value and raw.get("repeated") is True:
             self._log("info", LogEmoji.REPEAT, f"{{ code : {code}, message : {message} }}", force=True)
             result["code"] = CheckinStatus.REPEAT
             result["status"] = "重复签到"

@@ -9,6 +9,16 @@ def _failure(message, reason="browser-error"):
     return {"code": -2, "points": 0, "reason": reason, "message": message}
 
 
+def _http_failure(status):
+    if status == 401:
+        return _failure("HTTP 401: 登录已失效，请更新登录 Cookie", "login-required")
+    if status == 429:
+        return _failure("HTTP 429: 官网请求过于频繁，请稍后重试", "rate-limited")
+    if 500 <= status < 600:
+        return _failure(f"HTTP {status}: 官网服务暂时异常，请稍后重试", "server-error")
+    return _failure(f"HTTP {status}: 官网访问被拒绝或请求失败，请检查官网状态", "http-error")
+
+
 def checkin_in_browser(domain, cookies, headless=True, channel=None, timeout_ms=120000):
     """Return the official POST response; headed mode permits manual verification.
 
@@ -73,13 +83,19 @@ def checkin_in_browser(domain, cookies, headless=True, channel=None, timeout_ms=
                               timeout=remaining())
                 if not on_console():
                     return _failure("官网已跳转到登录页，请更新登录 Cookie", "login-required")
+                if not login_response.value.ok:
+                    return _http_failure(login_response.value.status)
                 try:
                     login = login_response.value.json()
                 except Exception:
                     return _failure("官网登录状态返回非 JSON，请在官网检查登录或验证", "login-required")
-                if (not login_response.value.ok or not isinstance(login, dict)
+                if (not isinstance(login, dict)
                         or type(login.get("code")) is not int or login["code"] != 0):
                     return _failure("官网登录状态无效，请更新登录 Cookie", "login-required")
+                profile = login.get("data")
+                if (not isinstance(profile, dict) or not isinstance(profile.get("email"), str)
+                        or not profile["email"].strip()):
+                    return _failure("官网未返回有效账号身份，请重新登录后更新 Cookie", "login-required")
 
                 button = page.get_by_role(
                     "button", name=re.compile(r"^\s*(?:Check\s*in|签到)\s*$", re.I)
@@ -95,7 +111,7 @@ def checkin_in_browser(domain, cookies, headless=True, channel=None, timeout_ms=
                     return _failure("签到时登录已失效，请更新登录 Cookie", "login-required")
                 response = checkin_response.value
                 if not response.ok:
-                    return _failure("官网签到请求失败，请在官网检查登录或人工验证", "needs-verification")
+                    return _http_failure(response.status)
                 try:
                     result = response.json()
                 except Exception:

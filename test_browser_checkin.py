@@ -148,6 +148,41 @@ class BrowserCheckinTests(unittest.TestCase):
                 self.assertEqual(page.clicked, 0)
                 self.assertTrue(fixture.context_closed and fixture.browser_closed)
 
+    def test_login_requires_a_profile_with_nonempty_email(self):
+        for login in ({"code": 0}, {"code": 0, "data": []},
+                      {"code": 0, "data": {}}, {"code": 0, "data": {"email": " "}},
+                      {"code": 0, "data": {"email": 123}}):
+            with self.subTest(login=login):
+                fixture = BrowserFixture(Page(login=login))
+                result = fixture.run()
+                self.assertEqual(result["code"], -2)
+                self.assertEqual(result["reason"], "login-required")
+                self.assertEqual(fixture.page.clicked, 0)
+
+    def test_http_status_is_classified_without_returning_response_body(self):
+        for status, reason in ((401, "login-required"), (403, "http-error"),
+                               (429, "rate-limited"), (500, "server-error"),
+                               (503, "server-error")):
+            for phase in ("status", "checkin"):
+                with self.subTest(status=status, phase=phase):
+                    class HttpFailurePage(Page):
+                        def emit(self, response):
+                            if response.url.endswith("/api/user/" + phase):
+                                response.status, response.ok = status, False
+                                response.payload = {"message": "private-response-body"}
+                            super().emit(response)
+                    fixture = BrowserFixture(HttpFailurePage())
+                    result = fixture.run()
+                    self.assertEqual(result["code"], -2)
+                    self.assertEqual(result["reason"], reason)
+                    self.assertIn(str(status), result["message"])
+                    self.assertNotIn("private", result["message"])
+                    self.assertTrue(fixture.context_closed and fixture.browser_closed)
+                    if phase == "status":
+                        self.assertEqual(fixture.page.clicked, 0)
+                    if status == 403:
+                        self.assertNotIn("更新登录 Cookie", result["message"])
+
     def test_malformed_json_and_schema_never_count_as_success(self):
         for payload in (ValueError("private body"), [], {"points": 2}, {"code": True}):
             with self.subTest(payload=payload):
