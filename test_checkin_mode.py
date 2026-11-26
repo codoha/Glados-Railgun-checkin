@@ -73,6 +73,14 @@ class BrowserModeTests(unittest.TestCase):
             self.assertEqual(result["code"], CheckinStatus.REPEAT)
             self.assertEqual(result["points"], "0")
 
+    def test_automated_browser_rejection_explains_actual_blocker(self):
+        with API("glados.cloud", checkin_mode="browser") as api:
+            result = api._parse_checkin({"code": 4, "reason": "device-mismatch",
+                                        "loginDevice": "macOS", "currentDevice": "Bot"})
+        self.assertEqual(result["code"], CheckinStatus.FAILURE)
+        self.assertIn("Bot", result["message"])
+        self.assertIn("普通浏览器", result["message"])
+
 
 if __name__ == "__main__":
     unittest.main()

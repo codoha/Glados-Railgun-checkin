@@ -444,6 +444,11 @@ class API:
             return result
 
         code = raw.get("code", -2)
+        if (code == 4 and raw.get("reason") == "device-mismatch"
+                and raw.get("currentDevice") == "Bot"):
+            result["message"] = "官网将当前浏览器识别为自动化环境（Bot），未签到；请使用普通浏览器完成验证"
+            self._log("warning", LogEmoji.WARNING, result["message"], force=True)
+            return result
         if code == 5 and raw.get("reason") == "turnstile":
             result["message"] = "Cloudflare 人机验证失败，未记录签到、未发放积分；请在官网完成验证后重试"
             self._log("warning", LogEmoji.WARNING, result["message"], force=True)

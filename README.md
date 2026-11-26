@@ -11,7 +11,7 @@
 - 默认 `GLADOS_CHECKIN_MODE=browser`；显式 `api` 只保留旧协议兼容，无法替代必需的真人验证。
 - 无人值守浏览器不能保证通过 Turnstile。出现 `needs-verification` 或 `turnstile` 时需在官网人工处理；脚本不会点击验证码、伪造验证结果或调用解题服务。
 - 手动运行 Actions 默认开启 `verify_only`，仍会尝试签到，但不推送、不兑换。定时运行沿用已有通知与兑换设置。
-- 2026-11-26 官网人工验证已实测签到成功，到账 2 分；回执含 `freeCap=2`，这是免费账号积分上限。GitHub Ubuntu 和 macOS runner 均实测被官网以 `device-mismatch / Automated check-in detected` 拒绝；无人值守签到尚未恢复，匹配操作系统不能消除此限制。
+- 2026-11-26 官网人工验证已实测签到成功，到账 2 分；回执含 `freeCap=2`，这是免费账号积分上限。GitHub Ubuntu 和 macOS runner 均实测被官网以 `device-mismatch / Automated check-in detected` 拒绝；无人值守签到尚未恢复，匹配操作系统不能消除此限制。本机回执进一步确认 `loginDevice=macOS`、`currentDevice=Bot`，属于自动化识别拒绝。
 - 离线回归：`python -m unittest discover -v`。
 
 ## 食用方式：
